@@ -23,6 +23,8 @@ label { display:block; color:var(--muted); font-size:.92rem; margin-bottom:6px; 
 .hint { color:var(--muted); font-size:.88rem; line-height:1.4; margin:10px 0 0; }
 .clock { text-align:center; padding:18px 8px 14px; }
 .phase { text-transform:uppercase; letter-spacing:.13em; color:var(--green); font-size:.9rem; font-weight:800; }
+.phase.exercise { color:var(--green); }
+.phase.rest { color:var(--red); }
 .time { font-size:clamp(4rem,19vw,7rem); font-weight:800; line-height:1.1; font-variant-numeric:tabular-nums; margin:8px 0; }
 .cycle { color:var(--muted); font-size:1rem; }
 .progress { height:8px; border-radius:20px; background:#31443b; overflow:hidden; margin-top:16px; }
@@ -215,6 +217,8 @@ footer { text-align:center; color:#81958a; font-size:.8rem; margin-top:18px; }
     const s = settings();
     const names = {ready:'Gotowy do treningu', exercise:'Ćwiczenie', rest:'Przerwa', manual:'Ćwiczenie — czas ręczny', done:'Trening zakończony'};
     $('phase').textContent = names[phase] || phase;
+    $('phase').classList.toggle('exercise', phase === 'exercise' || phase === 'manual');
+    $('phase').classList.toggle('rest', phase === 'rest');
     $('time').textContent = phase === 'manual' ? 'GO!' : fmt(phase === 'ready' ? (mode === 'fixed' ? s.exercise : 0) : remaining);
     $('cycle').textContent = `Cykl ${cycle} / ${s.cycles}`;
     let pct = 0;
