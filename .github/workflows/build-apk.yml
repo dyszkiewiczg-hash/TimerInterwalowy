@@ -25,13 +25,19 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - name: Przygotuj Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Zainstaluj platformę Android
+      - name: Zainstaluj Android SDK
+        shell: bash
         run: |
-          sdkmanager "platforms;android-35"
-          sdkmanager "build-tools;35.0.0"
+          SDK_ROOT="${ANDROID_HOME:-${ANDROID_SDK_ROOT}}"
+          SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -type f -name sdkmanager -print -quit)"
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "Nie znaleziono sdkmanager w Android SDK."
+            exit 1
+          fi
+
+          yes | "$SDKMANAGER" --licenses || true
+          "$SDKMANAGER" --install "platforms;android-35" "build-tools;35.0.0"
 
       - name: Przygotuj Gradle
         uses: gradle/actions/setup-gradle@v4
@@ -42,6 +48,7 @@ jobs:
         run: gradle assembleDebug
 
       - name: Udostępnij plik APK
+        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: TimerInterwalowy-debug-apk
