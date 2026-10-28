@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<meta name="theme-color" content="#101a17">
+<title>Timer Interwałowy</title>
+<style>
+:root { color-scheme: dark; --bg:#101a17; --panel:#1b2924; --green:#83e0a4; --muted:#b6c6bd; --red:#ff7979; }
+* { box-sizing:border-box; }
+body { margin:0; background:var(--bg); color:#f5fff8; font-family:system-ui,-apple-system,Segoe UI,sans-serif; }
+main { max-width:560px; margin:auto; padding:18px 16px 32px; }
+h1 { text-align:center; font-size:1.65rem; margin:8px 0 18px; }
+.tabs { display:flex; gap:8px; margin-bottom:16px; }
+button, input { font:inherit; }
+button { border:0; border-radius:13px; padding:13px 14px; font-weight:700; cursor:pointer; }
+.tab { flex:1; background:#263730; color:#dce9e1; }
+.tab.active { background:var(--green); color:#102017; }
+.panel { background:var(--panel); border-radius:18px; padding:16px; margin-bottom:14px; }
+label { display:block; color:var(--muted); font-size:.92rem; margin-bottom:6px; }
+.fields { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:10px; }
+.field input { width:100%; min-width:0; padding:12px 8px; border-radius:10px; border:1px solid #476156; background:#101a17; color:white; text-align:center; }
+.hint { color:var(--muted); font-size:.88rem; line-height:1.4; margin:10px 0 0; }
+.clock { text-align:center; padding:18px 8px 14px; }
+.phase { text-transform:uppercase; letter-spacing:.13em; color:var(--green); font-size:.9rem; font-weight:800; }
+.time { font-size:clamp(4rem,19vw,7rem); font-weight:800; line-height:1.1; font-variant-numeric:tabular-nums; margin:8px 0; }
+.cycle { color:var(--muted); font-size:1rem; }
+.progress { height:8px; border-radius:20px; background:#31443b; overflow:hidden; margin-top:16px; }
+.progress div { height:100%; width:0%; background:var(--green); transition:width .2s linear; }
+.controls { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.primary { background:var(--green); color:#102017; }
+.secondary { background:#31443b; color:white; }
+.stop { background:#633737; color:#fff; }
+.full { grid-column:1/-1; }
+.hidden { display:none !important; }
+.status { text-align:center; min-height:24px; color:var(--muted); margin:10px 0 0; }
+footer { text-align:center; color:#81958a; font-size:.8rem; margin-top:18px; }
+@media (max-width:360px) { .fields { grid-template-columns:1fr; } .time { font-size:4rem; } }
+</style>
+</head>
+<body>
+<main>
+  <h1>⏱ Timer interwałowy</h1>
+  <p id="currentPreset" style="text-align:center;color:#b6c6bd;margin:-10px 0 18px;overflow-wrap:anywhere">Własny trening</p>
+  <div class="tabs">
+    <button id="tabFixed" class="tab active" type="button">Czas ćwiczenia</button>
+    <button id="tabManual" class="tab" type="button">Tryb ręczny</button>
+  </div>
+
+  <section class="panel" id="settings">
+    <div class="fields">
+      <div class="field">
+        <label for="cycles">Liczba cykli</label>
+        <input id="cycles" type="number" min="1" max="999" value="8" inputmode="numeric">
+      </div>
+      <div class="field" id="exerciseField">
+        <label for="exercise">Ćwiczenie (sek.)</label>
+        <input id="exercise" type="number" min="1" max="86400" value="40" inputmode="numeric">
+      </div>
+      <div class="field">
+        <label for="rest">Przerwa (sek.)</label>
+        <input id="rest" type="number" min="1" max="86400" value="20" inputmode="numeric">
+      </div>
+    </div>
+    <p class="hint" id="modeHint">Każdy cykl składa się z ćwiczenia i przerwy (po ostatnim ćwiczeniu przerwa nie jest dodawana).</p>
+  </section>
+
+  <section class="panel">
+    <div class="clock">
+      <div class="phase" id="phase">Gotowy do treningu</div>
+      <div class="time" id="time">00:40</div>
+      <div class="cycle" id="cycle">Cykl 0 / 8</div>
+      <div class="progress"><div id="bar"></div></div>
+    </div>
+    <div class="controls">
+      <button id="start" class="primary" type="button">▶ Start</button>
+      <button id="pause" class="secondary" type="button" disabled>Ⅱ Pauza</button>
+      <button id="manualAction" class="primary full hidden" type="button">Zakończ ćwiczenie</button>
+      <button id="reset" class="stop full" type="button">↺ Reset</button>
+    </div>
+    <p class="status" id="status" aria-live="polite">Ustaw parametry i naciśnij Start.</p>
+  </section>
+  <section class="panel" id="presetPanel">
+    <h2 style="font-size:1.15rem;margin-top:0">📁 Moje zapisane zestawy</h2>
+    <p class="hint">Zapisz ustawienia, aby móc je później szybko wczytać.</p>
+    <button id="savePreset" class="primary full" type="button">💾 Zapisz aktualny trening jako zestaw</button>
+    <div id="savedList" style="display:flex;flex-direction:column;gap:10px;margin-top:14px"></div>
+    <p class="hint" id="savedStatus">Zestawy są zapisywane w pamięci aplikacji.</p>
+  </section>
+  <footer>Uwaga: podczas treningu nie zamykaj aplikacji.</footer>
+</main>
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  let mode = 'fixed', running = false, paused = false, phase = 'ready';
+  let cycle = 0, remaining = 0, phaseDuration = 0, endAt = 0, ticker = null;
+  let audioCtx = null, lastBeep = null;
+
+  function getInt(id, fallback) {
+    const n = Number.parseInt($(id).value, 10);
+    return Number.isFinite(n) ? n : fallback;
+  }
+  function settings() {
+    const cycles = Math.min(999, Math.max(1, getInt('cycles', 8)));
+    const exercise = Math.min(86400, Math.max(1, getInt('exercise', 40)));
+    const rest = Math.min(86400, Math.max(1, getInt('rest', 20)));
+    $('cycles').value = cycles; $('exercise').value = exercise; $('rest').value = rest;
+    return {cycles, exercise, rest};
+  }
+  function fmt(seconds) {
+    seconds = Math.max(0, Math.ceil(seconds));
+    const h = Math.floor(seconds / 3600), m = Math.floor((seconds % 3600) / 60), s = seconds % 60;
+    if (h > 0) return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+    return `${String(m).padStart(2,'0')}:${String(s).padStart(2,'0')}`;
+  }
+  function beep(freq=880, duration=.16, count=1) {
+    try {
+      audioCtx ||= new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+      const now = audioCtx.currentTime;
+      for (let i=0; i<count; i++) {
+        const osc = audioCtx.createOscillator(), gain = audioCtx.createGain();
+        osc.type = 'sine'; osc.frequency.value = freq;
+        gain.gain.setValueAtTime(.0001, now + i*(duration+.09));
+        gain.gain.exponentialRampToValueAtTime(.22, now + i*(duration+.09)+.015);
+        gain.gain.exponentialRampToValueAtTime(.0001, now + i*(duration+.09)+duration);
+        osc.connect(gain); gain.connect(audioCtx.destination);
+        osc.start(now + i*(duration+.09)); osc.stop(now + i*(duration+.09)+duration+.02);
+      }
+    } catch(e) { /* Dźwięk może być niedostępny w niektórych przeglądarkach. */ }
+  }
+  function setPhase(newPhase, duration) {
+    phase = newPhase; phaseDuration = duration; remaining = duration;
+    lastBeep = null;
+    if (duration > 0) endAt = Date.now() + duration*1000;
+    render();
+  }
+  function startWorkout() {
+    const s = settings();
+    if (paused) {
+      paused = false; running = true;
+      if (phase !== 'manual') endAt = Date.now() + remaining*1000;
+      $('status').textContent = 'Trening wznowiony.';
+      $('start').textContent = '▶ W toku';
+      $('pause').textContent = 'Ⅱ Pauza';
+      ticker = setInterval(tick, 100);
+      render();
+      return;
+    }
+    clearInterval(ticker);
+    cycle = 1; running = true; paused = false;
+    if (mode === 'fixed') setPhase('exercise', s.exercise);
+    else setPhase('manual', 0);
+    $('status').textContent = 'Powodzenia!';
+    beep(660, .12, 2);
+    ticker = setInterval(tick, 100);
+    render();
+  }
+  function nextAfterExercise() {
+    const s = settings();
+    if (cycle >= s.cycles) { finish(); return; }
+    setPhase('rest', s.rest);
+    $('status').textContent = 'Czas na przerwę.';
+    beep(520, .25, 2);
+  }
+  function nextAfterRest() {
+    const s = settings();
+    cycle++;
+    if (mode === 'fixed') setPhase('exercise', s.exercise);
+    else setPhase('manual', 0);
+    $('status').textContent = `Cykl ${cycle}: zaczynaj ćwiczenie!`;
+    beep(880, .16, 2);
+  }
+  function finish() {
+    clearInterval(ticker); ticker = null;
+    running = false; paused = false; phase = 'done'; remaining = 0;
+    $('status').textContent = 'Trening zakończony. Świetna robota!';
+    beep(1046, .28, 3); render();
+  }
+  function tick() {
+    if (!running || paused) return;
+    if (phase === 'manual') { render(); return; }
+    remaining = Math.max(0, (endAt - Date.now()) / 1000);
+    const sec = Math.ceil(remaining);
+    if (sec >= 1 && sec <= 3 && lastBeep !== sec) {
+      lastBeep = sec;
+      beep(sec === 1 ? 1046 : 820, .12, 1);
+      $('status').textContent = sec === 1 ? 'Koniec za 1 sekundę!' : `Koniec za ${sec} sekundy!`;
+    }
+    if (remaining <= 0) {
+      if (phase === 'exercise') nextAfterExercise();
+      else if (phase === 'rest') nextAfterRest();
+    }
+    render();
+  }
+  function pauseWorkout() {
+    if (paused) { startWorkout(); return; }
+    if (!running) return;
+    if (!paused) {
+      if (phase !== 'manual') remaining = Math.max(0, (endAt-Date.now())/1000);
+      paused = true; running = false; clearInterval(ticker); ticker = null;
+      $('status').textContent = 'Pauza. Naciśnij Wznów, aby kontynuować.';
+      $('start').textContent = '▶ Wznów';
+    } else startWorkout();
+    render();
+  }
+  function reset() {
+    clearInterval(ticker); ticker = null;
+    running = false; paused = false; cycle = 0; remaining = 0; phase = 'ready';
+    $('status').textContent = 'Ustaw parametry i naciśnij Start.';
+    $('start').textContent = '▶ Start'; $('pause').textContent = 'Ⅱ Pauza';
+    render();
+  }
+  function render() {
+    const s = settings();
+    const names = {ready:'Gotowy do treningu', exercise:'Ćwiczenie', rest:'Przerwa', manual:'Ćwiczenie — czas ręczny', done:'Trening zakończony'};
+    $('phase').textContent = names[phase] || phase;
+    $('time').textContent = phase === 'manual' ? 'GO!' : fmt(phase === 'ready' ? (mode === 'fixed' ? s.exercise : 0) : remaining);
+    $('cycle').textContent = `Cykl ${cycle} / ${s.cycles}`;
+    let pct = 0;
+    if (phase === 'exercise' || phase === 'rest') pct = phaseDuration ? 100*(1-remaining/phaseDuration) : 0;
+    if (phase === 'manual') pct = 100;
+    if (phase === 'done') pct = 100;
+    $('bar').style.width = `${Math.max(0,Math.min(100,pct))}%`;
+    $('start').disabled = running;
+    $('pause').disabled = !running && !paused;
+    $('pause').textContent = paused ? '▶ Wznów' : 'Ⅱ Pauza';
+    $('manualAction').classList.toggle('hidden', mode !== 'manual' || !running || paused);
+    $('manualAction').textContent = phase === 'manual' ? 'Zakończ ćwiczenie' : 'Pomiń / zakończ etap';
+    $('start').textContent = paused ? '▶ Wznów' : (running ? '▶ W toku' : (phase === 'done' ? '▶ Jeszcze raz' : '▶ Start'));
+    $('tabFixed').classList.toggle('active', mode === 'fixed');
+    $('tabManual').classList.toggle('active', mode === 'manual');
+  }
+  $('tabFixed').addEventListener('click', () => { if (running || paused) return; mode='fixed'; $('exerciseField').classList.remove('hidden'); $('modeHint').textContent='Każdy cykl składa się z ćwiczenia i przerwy (po ostatnim ćwiczeniu przerwa nie jest dodawana).'; reset(); });
+  $('tabManual').addEventListener('click', () => { if (running || paused) return; mode='manual'; $('exerciseField').classList.add('hidden'); $('modeHint').textContent='Naciśnij Start, aby rozpocząć ćwiczenie. Naciśnij „Zakończ ćwiczenie”, aby uruchomić przerwę. Po przerwie zacznie się kolejny cykl.'; reset(); });
+  $('start').addEventListener('click', startWorkout);
+  $('pause').addEventListener('click', pauseWorkout);
+  $('reset').addEventListener('click', reset);
+  $('manualAction').addEventListener('click', () => {
+    if (!running || mode !== 'manual') return;
+    if (phase === 'manual') { beep(520,.2,1); nextAfterExercise(); }
+    else if (phase === 'rest') nextAfterRest();
+  });
+  ['cycles','exercise','rest'].forEach(id => $(id).addEventListener('change', () => { if (!running && !paused) render(); }));
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && running && phase !== 'manual') tick();
+  });
+  render();
+})();
+</script>
+<script>
+(() => {
+  const KEY = 'timerInterwalowyPresetsV1';
+  const $ = id => document.getElementById(id);
+  let activeName = '';
+  const getMode = () => $('tabManual').classList.contains('active') ? 'manual' : 'fixed';
+  const getItems = () => { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch(e) { return []; } };
+  function header() { $('currentPreset').textContent = activeName ? 'Zestaw: ' + activeName : 'Własny trening'; }
+  function renderList() {
+    const list = $('savedList'); list.innerHTML = '';
+    const items = getItems();
+    if (!items.length) { const e = document.createElement('p'); e.className='hint'; e.textContent='Nie masz jeszcze zapisanych zestawów.'; list.appendChild(e); return; }
+    items.forEach(item => {
+      const card = document.createElement('div');
+      card.style.cssText = 'background:#101a17;border:1px solid ' + (item.name===activeName ? '#83e0a4' : '#476156') + ';border-radius:12px;padding:12px';
+      const title = document.createElement('div'); title.style.fontWeight='800'; title.style.overflowWrap='anywhere'; title.textContent=item.name;
+      const details = document.createElement('p'); details.className='hint';
+      details.textContent = item.cycles + ' cykli · ' + (item.mode==='manual' ? 'ćwiczenie ręczne' : 'ćwiczenie ' + item.exercise + ' s') + ' · przerwa ' + item.rest + ' s';
+      const row = document.createElement('div'); row.style.cssText='display:grid;grid-template-columns:1fr 1fr;gap:8px';
+      const load = document.createElement('button'); load.className='primary'; load.textContent='📂 Wczytaj'; load.type='button';
+      load.onclick = () => {
+        if ($('start').disabled || !$('pause').disabled) { alert('Zatrzymaj trening przed wczytaniem zestawu.'); return; }
+        (item.mode==='manual' ? $('tabManual') : $('tabFixed')).click();
+        $('cycles').value=item.cycles; $('exercise').value=item.exercise; $('rest').value=item.rest;
+        activeName=item.name; header(); renderList(); $('savedStatus').textContent='Wczytano zestaw: ' + item.name;
+        $('cycles').dispatchEvent(new Event('change')); $('exercise').dispatchEvent(new Event('change')); $('rest').dispatchEvent(new Event('change'));
+      };
+      const del = document.createElement('button'); del.className='stop'; del.textContent='🗑 Usuń'; del.type='button';
+      del.onclick = () => {
+        if (!confirm('Usunąć zestaw „' + item.name + '”?')) return;
+        localStorage.setItem(KEY, JSON.stringify(getItems().filter(x=>x.id!==item.id)));
+        if (activeName===item.name) activeName=''; header(); renderList(); $('savedStatus').textContent='Usunięto zestaw.';
+      };
+      row.append(load,del); card.append(title,details,row); list.appendChild(card);
+    });
+  }
+  $('savePreset').addEventListener('click', () => {
+    if ($('start').disabled || !$('pause').disabled) { alert('Zatrzymaj trening przed zapisaniem zestawu.'); return; }
+    const name=prompt('Podaj nazwę zestawu, np. HYROX:'); if (!name || !name.trim()) return;
+    const item={id:String(Date.now())+Math.random().toString(36).slice(2),name:name.trim(),mode:getMode(),cycles:Math.max(1,Number($('cycles').value)||8),exercise:Math.max(1,Number($('exercise').value)||40),rest:Math.max(1,Number($('rest').value)||20)};
+    const items=getItems(); items.push(item);
+    try { localStorage.setItem(KEY,JSON.stringify(items)); activeName=item.name; header(); renderList(); $('savedStatus').textContent='Zapisano zestaw: '+item.name; }
+    catch(e) { alert('Nie udało się zapisać zestawu w pamięci aplikacji.'); }
+  });
+  ['cycles','exercise','rest'].forEach(id => $(id).addEventListener('input', () => { if (!($('start').disabled || !$('pause').disabled)) { activeName=''; header(); renderList(); } }));
+  $('tabFixed').addEventListener('click', () => { activeName=''; header(); renderList(); });
+  $('tabManual').addEventListener('click', () => { activeName=''; header(); renderList(); });
+  renderList(); header();
+})();
+</script>
+</body>
+</html>
